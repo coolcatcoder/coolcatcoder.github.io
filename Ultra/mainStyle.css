@@ -1,7 +1,5 @@
-div.welcomeTitle {
-  width: auto;
+h1.welcomeTitle {
   position: absolute;
   top: 30px;
-  left: 50%;
-  margin-left: -50%;
+  text-align: center;
 }
