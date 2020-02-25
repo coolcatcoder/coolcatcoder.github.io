@@ -1,5 +1,5 @@
 h1.welcomeTitle {
-  position: absolute;
+  position: fixed;
   top: 30px;
   text-align: center;
 }
