@@ -1,8 +1,10 @@
 h1.welcomeTitle {
-  text-align: center;
+
 }
 
 div.welcomeTitleContainer {
   position: absolute;
   top: 30px;
+  text-align: center;
+  width: 100%;
 }
