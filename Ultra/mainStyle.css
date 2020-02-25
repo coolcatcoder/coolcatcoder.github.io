@@ -2,5 +2,6 @@ div.welcomeTitle {
   width: 100;
   position: absolute;
   top: 30px;
-  margin: 0 auto;
+  left: 50%;
+  margin-left: -50;
 }
