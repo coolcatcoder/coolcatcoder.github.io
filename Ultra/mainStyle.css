@@ -20,7 +20,7 @@ button.discordbutton {
   position: absolute;
   left: 25%;
   top: 120px;
-  width: 50px;
+  width: 60px;
   height: 50px;
 }
 
@@ -28,7 +28,7 @@ button.youtubebutton {
   position: absolute;
   left: 50%;
   top: 120px;
-  width: 50px;
+  width: 60px;
   height: 50px;
 }
 
@@ -36,6 +36,6 @@ button.twitchbutton {
   position: absolute;
   left: 75%;
   top: 120px;
-  width: 50px;
+  width: 60px;
   height: 50px;
 }
