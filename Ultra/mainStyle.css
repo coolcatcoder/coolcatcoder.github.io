@@ -9,3 +9,9 @@ div.welcomeTitleContainer {
   width: 100%;
   left: 0;
 }
+
+img.mainicon {
+  position: absolute;
+  left: 700px;
+  top: 50px;
+}
