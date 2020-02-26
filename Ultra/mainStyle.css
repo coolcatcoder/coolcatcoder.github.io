@@ -15,3 +15,21 @@ img.mainicon {
   left: 1010px;
   top: 25px;
 }
+
+button.discordbutton {
+  position: absolute;
+  left: 25%;
+  top: 120px;
+}
+
+button.youtubebutton {
+  position: absolute;
+  left: 50%;
+  top: 120px;
+}
+
+button.twitchbutton {
+  position: absolute;
+  left: 75%;
+  top: 120px;
+}
