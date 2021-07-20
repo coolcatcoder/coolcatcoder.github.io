@@ -1,0 +1,89 @@
+@keyframes spinnyspin {
+  0% {transform: rotate(0deg);}
+  100% {transform: rotate(360deg);}
+}
+
+body {
+  background-color: CornflowerBlue;
+}
+
+#main_title {
+  text-align: center;
+  font-family: "Bookman Old Style";
+  text-decoration: underline;
+  font-size: 400%;
+  color: Chartreuse;
+}
+
+#slogan {
+  text-align: center;
+  font-family: "Bookman Old Style";
+  width: 99%;
+  position: absolute;
+  bottom: 70%;
+  color: LawnGreen;
+}
+
+#slogan:hover {
+  animation-name: spinnyspin;
+  animation-duration: 5s;
+  animation-iteration-count: infinite;
+}
+
+#main_article {
+  font-family: "Bookman Old Style";
+  position: absolute;
+  top: 35%;
+  left: 10%;
+  border: 5px solid #2a48db;
+  width: 30%;
+  background-color: BlueViolet;
+}
+
+.heading1 {
+  text-align: center;
+  color: White;
+}
+
+#article1_image {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  margin-top: 5%;
+  border: 3px solid #1a37db;
+  border-radius: 10%;
+  padding: 6px;
+  width: 80%;
+  height: auto;
+}
+
+#article1_image:hover {
+  box-shadow: 0 0 10px 1px rgba(0, 140, 255, 0.5);
+}
+
+#article_2 {
+  font-family: "Bookman Old Style";
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  border: 5px solid #2a48db;
+  width: 30%;
+  background-color: BlueViolet;
+}
+
+.heading2 {
+  text-align: center;
+  color: White;
+}
+
+#article2_image {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  margin-top: 5%;
+  border: 3px solid #1a37db;
+  border-radius: 10%;
+  padding: 6px;
+  width: 80%;
+  height: auto;
+}
