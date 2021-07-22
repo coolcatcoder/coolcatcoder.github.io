@@ -1,4 +1,4 @@
-funtion evil() {
+function evil() {
   var notification_list [
     "Don't forget to check our site for new articles!",
     "Click here to learn to code CSS!",
