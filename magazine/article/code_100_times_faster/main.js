@@ -7,7 +7,7 @@ function wait(ms){
 }
 
 function evil() {
-  var notification_list [
+  var notification_list = [
     "Don't forget to check our site for new articles!",
     "Click here to learn to code CSS!",
     "Click here to learn to code JavaScript!",
