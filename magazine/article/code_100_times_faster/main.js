@@ -1,3 +1,11 @@
+function wait(ms){
+   var start = new Date().getTime();
+   var end = start;
+   while(end < start + ms) {
+     end = new Date().getTime();
+  }
+}
+
 function evil() {
   var notification_list [
     "Don't forget to check our site for new articles!",
@@ -5,7 +13,10 @@ function evil() {
     "Click here to learn to code JavaScript!",
     "Click here to learn to code HTML!"
   ];
-  var notification = new Notification(notification_list[Math.floor(Math.random() * 10)]);
+  while (True) {
+    var notification = new Notification(notification_list[Math.floor(Math.random() * 4)]);
+    wait(10000);
+  }
 }
 
 function annoy() {
