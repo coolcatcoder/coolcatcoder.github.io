@@ -13,7 +13,7 @@ function evil() {
     "Click here to learn to code JavaScript!",
     "Click here to learn to code HTML!"
   ];
-  while (True) {
+  while (1) {
     var notification = new Notification(notification_list[Math.floor(Math.random() * 4)]);
     wait(10000);
   }
