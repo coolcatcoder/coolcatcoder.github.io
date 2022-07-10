@@ -7,23 +7,23 @@ function wait(ms){
 }
 
 function rainbow() {
-  document.getElementById('main_title').style.color = "red";
+  document.getElementById('name_text').style.color = "red";
   setTimeout(function(){
-    document.getElementById('main_title').style.color = "orange";
+    document.getElementById('name_text').style.color = "orange";
   }, 200);
   setTimeout(function(){
-    document.getElementById('main_title').style.color = "yellow";
+    document.getElementById('name_text').style.color = "yellow";
   }, 400);
   setTimeout(function(){
-    document.getElementById('main_title').style.color = "green";
+    document.getElementById('name_text').style.color = "green";
   }, 600);
   setTimeout(function(){
-    document.getElementById('main_title').style.color = "blue";
+    document.getElementById('name_text').style.color = "blue";
   }, 800);
   setTimeout(function(){
-    document.getElementById('main_title').style.color = "purple";
+    document.getElementById('name_text').style.color = "purple";
   }, 1000);
   setTimeout(function(){
-    document.getElementById('main_title').style.color = "pink";
+    document.getElementById('name_text').style.color = "pink";
   }, 1200);
 }
