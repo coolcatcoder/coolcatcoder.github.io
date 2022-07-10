@@ -24,6 +24,6 @@ function rainbow() {
     document.getElementById('name_text').style.color = "purple";
   }, 1000);
   setTimeout(function(){
-    document.getElementById('name_text').style.color = "pink";
+    document.getElementById('name_text').style.color = "DeepPink";
   }, 1200);
 }

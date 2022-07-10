@@ -4,26 +4,31 @@
 }
 
 body {
-  background-color: azure;
+  background-color: DeepSkyBlue;
 }
 
-.welcome_text {
+#welcome_text {
   color: magenta;
   text-align: center;
   font-family: "Bookman Old Style", Georgia, serif;
 }
 
-.name_text {
-  color: pink;
+#name_text {
+  color: DeepPink;
   font-size: 200%;
 }
 
-.info {
-  color: lime;
+#info {
   text-align: center;
   font-family: "Bookman Old Style", Georgia, serif;
+  color: Magenta;
+  font-size: 200%;
+  width: 50%;
+  margin: 3cm auto;
+  -webkit-text-stroke: 2px Indigo;
 }
-.info:hover {
+
+#info:hover {
   animation-name: spinnyspin;
   animation-duration: 5s;
   animation-iteration-count: infinite;
