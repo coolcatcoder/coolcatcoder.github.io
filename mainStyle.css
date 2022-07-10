@@ -1,7 +1,30 @@
 body {
-  background-color: #2778b9;
+  background-color: azure;
 }
 
-.testText {
+.welcome_text {
+  color: magenta;
+  text-align: center;
+  font-family: "Bookman Old Style", Georgia, serif;
+}
+
+.name_text {
+  color: pink;
+  font-size: 200%;
+}
+
+@keyframes spinnyspin {
+  0% {transform: rotate(0deg);}
+  100% {transform: rotate(360deg);}
+}
+
+.info {
   color: lime;
+  text-align: center;
+  font-family: "Bookman Old Style", Georgia, serif;
+}
+.info:hover {
+  animation-name: spinnyspin;
+  animation-duration: 5s;
+  animation-iteration-count: infinite;
 }
