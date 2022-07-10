@@ -1,35 +1,56 @@
-@keyframes magic {
-  0% {transform: rotate(0deg);}
-  100% {transform: rotate(360deg);}
+@keyframes rainbow_magic {
+		100%,0%{
+			color: rgb(255,0,0);
+		}
+		8%{
+			color: rgb(255,127,0);
+		}
+		16%{
+			color: rgb(255,255,0);
+		}
+		25%{
+			color: rgb(127,255,0);
+		}
+		33%{
+			color: rgb(0,255,0);
+		}
+		41%{
+			color: rgb(0,255,127);
+		}
+		50%{
+			color: rgb(0,255,255);
+		}
+		58%{
+			color: rgb(0,127,255);
+		}
+		66%{
+			color: rgb(0,0,255);
+		}
+		75%{
+			color: rgb(127,0,255);
+		}
+		83%{
+			color: rgb(255,0,255);
+		}
+		91%{
+			color: rgb(255,0,127);
+		}
 }
 
 body {
   background-color: DeepSkyBlue;
 }
 
-#welcome_text {
-  color: magenta;
+.link_holder {
   text-align: center;
   font-family: "Bookman Old Style", Georgia, serif;
+  font-size: 150%;
+  width: 80%;
+  margin: 1% auto;
 }
 
-#name_text {
-  color: DeepPink;
-  font-size: 200%;
-}
-
-#info {
-  text-align: center;
-  font-family: "Bookman Old Style", Georgia, serif;
-  color: Magenta;
-  font-size: 200%;
-  width: 60%;
-  margin: 3cm auto;
-  -webkit-text-stroke: 2px Indigo;
-}
-
-#info:hover {
-  animation-name: magic;
+.d_link:hover {
+  animation-name: rainbow_magic;
   animation-duration: 5s;
   animation-iteration-count: infinite;
 }
