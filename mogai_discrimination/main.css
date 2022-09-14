@@ -1,0 +1,67 @@
+@keyframes rainbow_magic {
+		100%,0%{
+			color: rgb(255,0,0);
+		}
+		8%{
+			color: rgb(255,127,0);
+		}
+		16%{
+			color: rgb(255,255,0);
+		}
+		25%{
+			color: rgb(127,255,0);
+		}
+		33%{
+			color: rgb(0,255,0);
+		}
+		41%{
+			color: rgb(0,255,127);
+		}
+		50%{
+			color: rgb(0,255,255);
+		}
+		58%{
+			color: rgb(0,127,255);
+		}
+		66%{
+			color: rgb(0,0,255);
+		}
+		75%{
+			color: rgb(127,0,255);
+		}
+		83%{
+			color: rgb(255,0,255);
+		}
+		91%{
+			color: rgb(255,0,127);
+		}
+}
+
+@keyframes spinnyspin {
+  0% {transform: rotate(0deg);}
+  100% {transform: rotate(360deg);}
+}
+
+body {
+  background-color: DeepSkyBlue;
+}
+
+.main_div {
+  text-align: center;
+  font-family: "Bookman Old Style", Georgia, serif;
+  font-size: 150%;
+  width: 80%;
+  margin: 1% auto;
+}
+
+.main_paragraph:hover {
+  animation-name: rainbow_magic;
+  animation-duration: 5s;
+  animation-iteration-count: infinite;
+}
+
+.main_title:hover {
+  animation-name: spinnyspin;
+  animation-duration: 5s;
+  animation-iteration-count: infinite;
+}
