@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <title>Blog Chaos</title>
+  </head>
+  <body>
+    <h1>Random notes on noise!</h1>
+    <br>
+    <p>So for snoise(Pos * Scale), the scale controls how big the circly parts of the snoise are. The bigger the scale, the smaller the circles. The smaller the scale, the larger the circly bits</p>
+    <br>
+    <br>
+    <h3>Non-uniform scale in biome selection noise:</h3>
+    <br>
+    <p>This is going to sound a bit weird, but I recommend using any amount snoise maps to control your biomes. Basically treat every snoise map as a <b>SOMETHING</b>. For example 1 snoise map could be rainfall, another could be temperature, etc. And the scales do not need to be the same. Infact I would reccommend making sure the scales are different, as it creates cool patterns. Personally I like to have 3 snoise maps for my biomes, as the last 1 can be which overall world it sort of belongs to, with the 1st and 2nd snoise maps being the part that actually decides the biome via aabb (axis aligned bounding box), with each biome having a defined shape and position.</p>
+  </body>
+</html>
