@@ -33,3 +33,23 @@ body {
   animation-duration: 5s;
   animation-iteration-count: infinite;
 }
+
+#links {
+  text-align: center;
+  font-family: "Bookman Old Style", Georgia, serif;
+  color: crimson;
+  font-size: 300%;
+  width: 60%;
+  margin: 3cm auto;
+  -webkit-text-stroke: 2px lime;
+}
+
+.link {
+  color: crimson;
+  -webkit-text-stroke: 2px lime;
+}
+
+.link:hover {
+  color: blueviolet;
+  -webkit-text-stroke: 2px goldenrod;
+}
