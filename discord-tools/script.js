@@ -1,6 +1,6 @@
 function regional_convert() {
     let input = document.getElementById("regional_input").value;
-    let no_flags = document.getElementById("no_flags").value;
+    let no_flags = document.getElementById("no_flags").checked;
     console.log(no_flags);
 
     let output = ""
@@ -8,7 +8,7 @@ function regional_convert() {
         let input_char = input.charAt(i);
         if (/[a-zA-Z]/.test(input_char)) {
             output += ":regional_indicator_" + input_char.toLowerCase() + ":";
-            if (no_flags == "on") {
+            if (no_flags) {
                 output += '​';
             }
             console.log(input_char);
