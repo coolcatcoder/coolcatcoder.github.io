@@ -5,8 +5,11 @@ function regional_convert() {
         let input_char = input.charAt(i);
         if (/[a-zA-Z]/.test(input_char)) {
             output += ":regional_indicator_" + input_char.toLowerCase() + ":";
+            console.log(input_char);
         } else if (/\d/.test(input_char)) {
             output += output += ":number_" + input_char.toLowerCase() + ":";;
+        } else if (input_char == ':') {
+            output += "\:";
         } else {
             output += input_char;
         }
