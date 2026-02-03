@@ -1,0 +1,15 @@
+{
+  "name": "discord_tools",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "discord_tools_bg.wasm",
+    "discord_tools.js",
+    "discord_tools.d.ts"
+  ],
+  "main": "discord_tools.js",
+  "types": "discord_tools.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
