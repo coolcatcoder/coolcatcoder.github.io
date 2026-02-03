@@ -1,0 +1,1 @@
+wasm-pack build --target web --out-dir /home/coolcatcoder/Documents/GitHub/coolcatcoder.github.io/discord-tools/pkg
