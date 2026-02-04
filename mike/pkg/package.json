@@ -1,0 +1,15 @@
+{
+  "name": "mike",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "mike_bg.wasm",
+    "mike.js",
+    "mike.d.ts"
+  ],
+  "main": "mike.js",
+  "types": "mike.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
