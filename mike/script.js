@@ -6,6 +6,6 @@ await init();
 
 console.log("Halfway there.");
 
-wasm.main();
+wasm.main(window.innerWidth, window.innerHeight);
 
 console.log("Test?");

@@ -16,6 +16,15 @@ bevy = { version = "0.18", default-features = false, features = [
     "bevy_sprite_render",
     "bevy_winit",
     "bevy_log",
+    "bevy_gizmos",
+    "bevy_gizmos_render",
+    "bevy_picking",
+    "bevy_asset",
+    "png",
+    "bevy_ui",
+    "bevy_ui_render",
+    "sprite_picking",
+    "bevy_picking",
 ] }
 
 [[example]]
