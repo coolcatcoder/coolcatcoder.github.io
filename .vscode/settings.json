@@ -1,0 +1,6 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "rust_source/discord_tools/Cargo.toml",
+        "rust_source/mike/Cargo.toml",
+    ]
+}
