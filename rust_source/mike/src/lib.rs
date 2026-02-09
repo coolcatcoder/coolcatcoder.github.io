@@ -1,8 +1,13 @@
-use std::collections::HashMap;
+#![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
+
+use std::{collections::HashMap, ops::Range};
 
 use bevy::{
     camera::{RenderTarget, visibility::RenderLayers},
-    color::palettes::css::{BLACK, LIGHT_BLUE, LIGHT_CORAL, LIGHT_GREEN, PINK, PURPLE, RED, YELLOW},
+    color::palettes::css::{
+        BLACK, BROWN, GREEN, LIGHT_BLUE, LIGHT_GREEN, PURPLE, RED, WHITE, YELLOW,
+    },
     prelude::*,
     window::{PrimaryWindow, WindowRef, WindowResolution},
 };
@@ -33,9 +38,10 @@ pub fn plugin(app: &mut App) {
             Update,
             (
                 cursor_translation,
-                sprite_picker,
                 draw_selected,
                 picker_sprite_hover_gizmo,
+                display_dialogue,
+                game_state,
                 (draw_cursor,).after(cursor_translation),
             ),
         )
@@ -43,11 +49,15 @@ pub fn plugin(app: &mut App) {
         .init_resource::<CursorWorldTranslation>()
         .init_resource::<Tiles>()
         .init_resource::<HoveredPickerSprite>()
+        .init_resource::<GameState>()
         .insert_resource(SpritePickingSettings {
             require_markers: false,
             picking_mode: SpritePickingMode::BoundingBox,
         })
-        .add_observer(place);
+        .add_observer(place)
+        .add_observer(erase)
+        .add_observer(next_dialogue)
+        .init_resource::<Dialogue>();
 }
 
 const CELL_LENGTH: f32 = 50.;
@@ -57,6 +67,7 @@ fn start(
     primary_window: Single<(Entity, &Window), With<PrimaryWindow>>,
     asset_server: Res<AssetServer>,
     mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+    mut dialogue: ResMut<Dialogue>,
 ) {
     commands.spawn((
         Camera2d,
@@ -70,23 +81,61 @@ fn start(
         .observe(place_drag)
         .observe(rotation);
 
-    let roster: Vec<(Handle<TextureAtlasLayout>, u16, Vec<Entity>)> = [TextureAtlasLayout::from_grid(
-        UVec2::splat(32),
-        20,
-        32,
-        Some(UVec2::splat(1)),
-        Some(UVec2::splat(2)),
-    )]
+    let texture_atlas_layouts: Vec<Handle<TextureAtlasLayout>> = [
+        TextureAtlasLayout::from_grid(
+            UVec2::splat(32),
+            20,
+            32,
+            Some(UVec2::splat(1)),
+            Some(UVec2::splat(2)),
+        ),
+        TextureAtlasLayout::from_grid(
+            UVec2::splat(16),
+            2,
+            1,
+            Some(UVec2::splat(1)),
+            Some(UVec2::new(2 + 32 * 20 + 22, 2)),
+        ),
+        TextureAtlasLayout::from_grid(
+            UVec2::splat(16),
+            3,
+            1,
+            Some(UVec2::splat(3)),
+            Some(UVec2::new(1002, 154)),
+        ),
+        TextureAtlasLayout::from_grid(UVec2::splat(16), 3, 1, None, Some(UVec2::new(1059, 154))),
+        TextureAtlasLayout::from_grid(UVec2::splat(16), 5, 1, None, Some(UVec2::new(1110, 154))),
+        TextureAtlasLayout::from_grid(UVec2::splat(16), 5, 1, None, Some(UVec2::new(1193, 154))),
+    ]
     .into_iter()
-    .map(|texture_atlas_layout| {
-        let rotations = texture_atlas_layout.len();
-        (
-            texture_atlas_layouts.add(texture_atlas_layout),
-            rotations as u16,
-            (0..rotations).map(|_| commands.spawn_empty().id()).collect(),
-        )
-    })
+    .map(|layout| texture_atlas_layouts.add(layout))
     .collect();
+
+    #[allow(clippy::single_range_in_vec_init)]
+    let tabs: [&[(usize, &[Range<usize>])]; _] = [
+        &[(0, &[0..280])],
+        &[
+            (0, &[280..539]),
+            (2, &[0..3]),
+            (3, &[0..3]),
+            (4, &[0..5]),
+            (5, &[0..5]),
+        ],
+    ];
+    let tabs: Vec<Vec<(usize, usize, Entity)>> = tabs
+        .into_iter()
+        .map(|sprites| {
+            sprites
+                .iter()
+                .flat_map(|(layout, sprite_ranges)| {
+                    sprite_ranges.iter().cloned().flat_map(move |sprite_range| {
+                        sprite_range.map(move |sprite_index| (layout, sprite_index))
+                    })
+                })
+                .map(|(layout, sprite)| (*layout, sprite, commands.spawn_empty().id()))
+                .collect()
+        })
+        .collect();
 
     let texture = asset_server.load("board.png");
 
@@ -103,7 +152,7 @@ fn start(
     let mut sprite = Sprite::from_atlas_image(
         texture.clone(),
         TextureAtlas {
-            layout: roster[0].0.clone(),
+            layout: texture_atlas_layouts[tabs[0][0].0].clone(),
             index: 0,
         },
     );
@@ -111,9 +160,10 @@ fn start(
     commands.spawn((CursorSprite, sprite));
 
     let sprites = Sprites {
+        tab: 0,
         selected: 0,
-        rotation: 0,
-        roster,
+        texture_atlas_layouts,
+        tabs,
         texture,
     };
 
@@ -121,6 +171,20 @@ fn start(
     spawn_picker(&mut commands, font, &sprites, primary_window.1);
 
     commands.insert_resource(sprites);
+
+    spawn_dialogue_box(&mut commands, &asset_server);
+
+    dialogue.set([
+        "Hey Mike!\n(You click the dialogue box to continue.)",
+        "You see that grid of tiles on the left?\nClick a tile to select it.\nYou can also scroll to navigate.",
+        "The blue bar at the top moves the grid.\nThe green bar at the bottom resizes\nthe grid.",
+        "Tabs are to the right of the grid.\nClick a tab to open its category of tiles.\nThe longest tab is the one currently open.",
+        "Once you have selected a tile, you can\nthen draw in the empty space to the right.\nLeft click to place.\nRight click to erase.",
+        "Your job is to assemble the various\nboards, as accurately as possible.",
+        "You will be shown the blueprint for the\nboard for an amount of time, before it\ndisappears.",
+        "When you are finished press the \"DONE\"\nbutton in the bottom right.\n(It will appear when the game starts.)",
+        "Good luck! Have fun!",
+    ], |state| *state.0 = GameState::REST);
 }
 
 #[derive(Resource, Default)]
@@ -192,14 +256,39 @@ fn draw_cursor(
     gizmos.rect_2d(cursor_world_translation, Vec2::splat(CELL_LENGTH), RED);
 }
 
+#[derive(Component)]
+struct SpriteMarker(usize, usize);
+
 #[derive(Resource)]
 struct Sprites {
-    selected: u16,
-    rotation: u16,
-    // TO DO: Remove the u16.
-    /// (layout, length, tiles on the picker)
-    roster: Vec<(Handle<TextureAtlasLayout>, u16, Vec<Entity>)>,
+    tab: usize,
+    selected: usize,
+
+    texture_atlas_layouts: Vec<Handle<TextureAtlasLayout>>,
+    // (texture_atlas_layouts index, atlas index, picker sprite)
+    tabs: Vec<Vec<(usize, usize, Entity)>>,
     texture: Handle<Image>,
+}
+
+impl Sprites {
+    fn sprite(&self) -> Sprite {
+        let selected = self.tabs[self.tab][self.selected];
+
+        let mut sprite = Sprite::from_atlas_image(
+            self.texture.clone(),
+            TextureAtlas {
+                layout: self.texture_atlas_layouts[selected.0].clone(),
+                index: selected.1,
+            },
+        );
+        sprite.custom_size = Some(Vec2::splat(CELL_LENGTH));
+
+        sprite
+    }
+
+    fn sprite_marker(&self) -> SpriteMarker {
+        SpriteMarker(self.tab, self.selected)
+    }
 }
 
 #[derive(Resource, Default)]
@@ -212,19 +301,75 @@ struct Tiles(HashMap<IVec2, Entity>);
 #[derive(Event)]
 struct Place;
 
+#[derive(Event)]
+struct Erase;
+
 fn place_drag(
-    _: On<Pointer<Drag>>,
+    on: On<Pointer<Drag>>,
     cursor_grid_translation: Res<CursorGridTranslation>,
     mut commands: Commands,
 ) {
     if !cursor_grid_translation.is_changed() {
         return;
     }
-    commands.trigger(Place);
+    match on.button {
+        PointerButton::Primary => commands.trigger(Place),
+        PointerButton::Secondary => commands.trigger(Erase),
+        PointerButton::Middle => (),
+    }
 }
 
-fn place_press(_: On<Pointer<Press>>, mut commands: Commands) {
-    commands.trigger(Place);
+fn place_press(on: On<Pointer<Press>>, mut commands: Commands) {
+    match on.button {
+        PointerButton::Primary => commands.trigger(Place),
+        PointerButton::Secondary => commands.trigger(Erase),
+        PointerButton::Middle => (),
+    }
+}
+
+
+fn erase(
+    _: On<Erase>,
+    cursor_grid_translation: Res<CursorGridTranslation>,
+    mut tiles: ResMut<Tiles>,
+    ui: Query<(&UiHover, &UiDragged)>,
+    sprite_markers: Query<&SpriteMarker>,
+    mut commands: Commands,
+) {
+    let Some(cursor_grid_translation) = cursor_grid_translation.0 else {
+        return;
+    };
+    if !ui
+        .iter()
+        .all(|(hovered, dragged)| !(hovered.0 || dragged.0))
+    {
+        return;
+    }
+
+    info!("Erased.");
+
+    #[cfg(target_os = "linux")]
+    {
+        let debug_tiles: Vec<(i32, i32, usize, usize)> = tiles
+            .0
+            .iter()
+            .map(|(translation, entity)| {
+                let sprite_marker = sprite_markers.get(*entity).unwrap();
+                (
+                    translation.x,
+                    translation.y,
+                    sprite_marker.0,
+                    sprite_marker.1,
+                )
+            })
+            .collect();
+        info!("{:?}", debug_tiles);
+    }
+
+    if let Some(previous_tile) = tiles.0.remove(&cursor_grid_translation) {
+        commands.entity(previous_tile).despawn();
+        info!("Removed previous.");
+    }
 }
 
 fn place(
@@ -247,20 +392,11 @@ fn place(
 
     info!("Placed.");
 
-    let mut sprite = Sprite::from_atlas_image(
-        sprites.texture.clone(),
-        TextureAtlas {
-            layout: sprites.roster[sprites.selected as usize].0.clone(),
-            index: sprites.rotation as usize,
-        },
-    );
-
-    sprite.custom_size = Some(Vec2::splat(CELL_LENGTH));
-
     let tile = commands
         .spawn((
             Transform::from_translation(grid_to_world(cursor_grid_translation).extend(0.)),
-            sprite,
+            sprites.sprite(),
+            sprites.sprite_marker(),
         ))
         .id();
 
@@ -275,209 +411,16 @@ fn rotation(
     mut sprites: ResMut<Sprites>,
     mut cursor_sprite: Single<&mut Sprite, With<CursorSprite>>,
 ) {
-    let rotation = sprites.rotation as i16 + on.y.signum() as i16;
-    let rotation = rotation.rem_euclid(sprites.roster[sprites.selected as usize].1 as i16);
+    let rotation = sprites.selected as isize + on.y.signum() as isize;
+    let rotation = rotation.rem_euclid(sprites.tabs[sprites.tab].len() as isize);
     info!("{}", rotation);
-    sprites.rotation = rotation as u16;
+    sprites.selected = rotation as usize;
 
-    let mut sprite = Sprite::from_atlas_image(
-        sprites.texture.clone(),
-        TextureAtlas {
-            layout: sprites.roster[sprites.selected as usize].0.clone(),
-            index: sprites.rotation as usize,
-        },
-    );
-    sprite.custom_size = Some(Vec2::splat(CELL_LENGTH));
-    **cursor_sprite = sprite;
-}
-
-fn sprite_picker(
-    sprite_pickers: Query<(&SpritePicker, &Interaction), Changed<Interaction>>,
-    mut sprites: ResMut<Sprites>,
-    mut cursor_sprite: Single<&mut Sprite, With<CursorSprite>>,
-) {
-    let Some(sprite_picker) = sprite_pickers
-        .iter()
-        .find_map(|(sprite_picker, interaction)| {
-            if matches!(interaction, Interaction::Pressed) {
-                return Some(sprite_picker);
-            }
-            None
-        })
-    else {
-        return;
-    };
-
-    sprites.selected = sprite_picker.roster_index;
-    sprites.rotation = sprite_picker.rotation;
-
-    let mut sprite = Sprite::from_atlas_image(
-        sprites.texture.clone(),
-        TextureAtlas {
-            layout: sprites.roster[sprites.selected as usize].0.clone(),
-            index: sprites.rotation as usize,
-        },
-    );
-    sprite.custom_size = Some(Vec2::splat(CELL_LENGTH));
-    **cursor_sprite = sprite;
-
-    info!("Selected a new sprite.");
+    **cursor_sprite = sprites.sprite();
 }
 
 #[derive(Component)]
-struct UiRoot;
-
-#[derive(Component)]
-struct SpritePicker {
-    roster_index: u16,
-    rotation: u16,
-}
-
-fn spawn_ui(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites) {
-    commands
-        .spawn((
-            UiRoot,
-            Interaction::None,
-            BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
-            Node {
-                width: px(800),
-                height: percent(50),
-                display: Display::Grid,
-                padding: px(3).all(),
-                grid_template_columns: RepeatedGridTrack::flex(25, 1.),
-                //grid_template_rows: RepeatedGridTrack::flex(21, 1.),
-                grid_auto_flow: GridAutoFlow::Row,
-                row_gap: px(3),
-                column_gap: px(3),
-                align_self: AlignSelf::End,
-                ..default()
-            },
-        ))
-        .with_children(|builder| {
-            sprites
-                .roster
-                .iter()
-                .enumerate()
-                .flat_map(|(roster_index, (texture_atlas_layout, length, _))| {
-                    (0..*length).map(move |index| {
-                        (
-                            SpritePicker {
-                                roster_index: roster_index as u16,
-                                rotation: index,
-                            },
-                            Node {
-                                //margin: Val::Percent(1.).all(),
-                                //height: px(5),
-                                aspect_ratio: Some(1.),
-                                ..default()
-                            },
-                            Interaction::None,
-                            ImageNode::from_atlas_image(
-                                sprites.texture.clone(),
-                                TextureAtlas {
-                                    layout: texture_atlas_layout.clone(),
-                                    index: index as usize,
-                                },
-                            ),
-                        )
-                    })
-                })
-                .for_each(|bundle| {
-                    builder.spawn(bundle);
-                });
-        });
-}
-
-fn tile_picker_ui(commands: &mut Commands, font: Handle<Font>, sprites: &Sprites) -> impl Bundle {
-    const FONT_SIZE: f32 = 20.;
-    const LINE_HEIGHT: f32 = 45.;
-
-    let list = sprites.roster.iter().enumerate().flat_map(
-        |(roster_index, (texture_atlas_layout, length, _))| {
-            (0..*length).map(move |index| {
-                (
-                    Node {
-                        min_height: px(LINE_HEIGHT),
-                        max_height: px(LINE_HEIGHT),
-                        ..default()
-                    },
-                    children![(
-                        // Text(format!("Item {i}")),
-                        // TextFont {
-                        //     font: font.clone(),
-                        //     ..default()
-                        // },
-                        // Label,
-                        SpritePicker {
-                            roster_index: roster_index as u16,
-                            rotation: index,
-                        },
-                        Node {
-                            margin: Val::Percent(1.).all(),
-                            ..default()
-                        },
-                        Interaction::None,
-                        ImageNode::from_atlas_image(
-                            sprites.texture.clone(),
-                            TextureAtlas {
-                                layout: texture_atlas_layout.clone(),
-                                index: index as usize,
-                            }
-                        ),
-                        //AccessibilityNode(accesskit::Node::new(Role::ListItem)),
-                    )],
-                )
-            })
-        },
-    );
-
-    let parent = commands
-        .spawn((
-            UiRoot,
-            Interaction::None,
-            Node {
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                width: px(200),
-                ..default()
-            },
-        ))
-        .id();
-
-    let child = commands
-        .spawn((
-            // Title
-            Text::new("Picker!"),
-            TextFont {
-                font: font.clone(),
-                font_size: FONT_SIZE,
-                ..default()
-            },
-            Label,
-        ))
-        .id();
-    commands.entity(parent).add_child(child);
-
-    let child = commands
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                align_self: AlignSelf::Stretch,
-                height: percent(50),
-                overflow: Overflow::scroll_y(),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.10, 0.10, 0.10)),
-        ))
-        .id();
-    commands.entity(parent).add_child(child);
-
-    let mut parent = commands.entity(child);
-    for bundle in list {
-        parent.with_child(bundle);
-    }
-}
+struct SpritePicker(usize);
 
 #[derive(Event)]
 struct PickerUpdate {
@@ -495,78 +438,100 @@ struct UiDragged(bool);
 const PICKER_TILE_LENGTH: f32 = CELL_LENGTH * 0.5;
 
 fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites, window: &Window) {
-    let tiles_to_pick: Vec<Entity> = sprites
-        .roster
+    let not_sure: Vec<Vec<Entity>> = sprites
+        .tabs
         .iter()
+        .map(|tab_sprites| {
+            tab_sprites
+.iter().copied()
         .enumerate()
-        .flat_map(|(roster_index, (texture_atlas_layout, _, entities))| {
-            entities.iter().copied().enumerate().map(move |(index, entity)| {
+        .map(|(index, (layout_index, sprite_index, entity))| {
+
                 let mut sprite = Sprite::from_atlas_image(
                     sprites.texture.clone(),
                     TextureAtlas {
-                        layout: texture_atlas_layout.clone(),
-                        index,
+                        layout: sprites.texture_atlas_layouts[layout_index].clone(),
+                        index: sprite_index,
                     },
                 );
                 sprite.custom_size = Some(Vec2::splat(PICKER_TILE_LENGTH));
                 (entity, (
                     sprite,
-                    SpritePicker {
-                        roster_index: roster_index as u16,
-                        rotation: index as u16,
-                    },
+                    SpritePicker(index),
                     Pickable {
                         should_block_lower: false,
                         is_hoverable: true,
                     },
                 ))
-            })
+
         })
         .map(|(entity, bundle)| commands.entity(entity).insert(bundle).observe(picker_sprite_over).observe(picker_sprite_out).observe(|on: On<Pointer<Click>>, mut sprite_picker: Query<&SpritePicker>, mut sprites: ResMut<Sprites>, mut cursor_sprite: Single<&mut Sprite, With<CursorSprite>>| {
             let sprite_picker = sprite_picker.get_mut(on.entity).unwrap();
 
-            sprites.selected = sprite_picker.roster_index;
-            sprites.rotation = sprite_picker.rotation;
+            sprites.selected = sprite_picker.0;
 
-            let mut sprite = Sprite::from_atlas_image(
-                sprites.texture.clone(),
-                TextureAtlas {
-                    layout: sprites.roster[sprites.selected as usize].0.clone(),
-                    index: sprites.rotation as usize,
-                },
-            );
-            sprite.custom_size = Some(Vec2::splat(CELL_LENGTH));
-            **cursor_sprite = sprite;
+            **cursor_sprite = sprites.sprite();
 
             info!("Selected a new sprite.");
         }).id())
+        .collect()
+        })
         .collect();
 
-    let [base, grab, resize] = [BLACK, LIGHT_BLUE, LIGHT_GREEN].map(|colour| {
-        commands
-            .spawn((
-                UiHover(false),
-                UiDragged(false),
-                Sprite::from_color(colour, Vec2::ZERO),
-                Pickable {
-                    should_block_lower: true,
-                    is_hoverable: true,
-                },
-            ))
+    fn spawn_ui<'a>(commands: &'a mut Commands, bundle: impl Bundle) -> EntityCommands<'a> {
+        let mut entity_commands = commands.spawn((
+            bundle,
+            UiHover(false),
+            UiDragged(false),
+            Pickable {
+                should_block_lower: true,
+                is_hoverable: true,
+            },
+        ));
+        entity_commands
             .observe(|on: On<Pointer<Over>>, mut hover: Query<&mut UiHover>| {
                 hover.get_mut(on.entity).unwrap().0 = true;
             })
             .observe(|on: On<Pointer<Out>>, mut hover: Query<&mut UiHover>| {
                 hover.get_mut(on.entity).unwrap().0 = false;
-            })
-            .id()
+            });
+        entity_commands
+    }
+
+    let [base, grab, resize] = [BLACK, LIGHT_BLUE, LIGHT_GREEN]
+        .map(|colour| spawn_ui(commands, Sprite::from_color(colour, Vec2::ZERO)).id());
+
+    let mut tab_index = 0;
+    let tabs = [BROWN, GREEN].map(|colour| {
+        let entity = spawn_ui(commands, Sprite::from_color(colour, Vec2::ZERO))
+            .observe(
+                move |_: On<Pointer<Click>>,
+                      mut commands: Commands,
+                      transforms: Query<&Transform>,
+                      mut sprites: ResMut<Sprites>,
+                      mut cursor_sprite: Single<&mut Sprite, With<CursorSprite>>| {
+                    sprites.tab = tab_index;
+                    sprites.selected = 0;
+
+                    commands.trigger(PickerUpdate {
+                        translation: transforms.get(grab).unwrap().translation.xy(),
+                        resize_delta: Vec2::ZERO,
+                    });
+
+                    **cursor_sprite = sprites.sprite();
+                },
+            )
+            .id();
+        tab_index += 1;
+        entity
     });
 
     commands.add_observer(
         move |on: On<PickerUpdate>,
-              mut sprites: Query<(&mut Transform, &mut Sprite)>,
-              mut visibility: Query<&mut Visibility>| {
-            let (mut base_transform, mut base_sprite) = sprites.get_mut(base).unwrap();
+              mut transforms: Query<(&mut Transform, &mut Sprite)>,
+              mut visibility: Query<&mut Visibility>,
+              sprites: Option<Res<Sprites>>| {
+            let (mut base_transform, mut base_sprite) = transforms.get_mut(base).unwrap();
             let size = base_sprite.custom_size.unwrap() + on.resize_delta;
             base_transform.translation = Vec3::new(
                 on.translation.x,
@@ -576,18 +541,35 @@ fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites,
             base_sprite.custom_size = Some(size);
 
             // grab
-            let (mut transform, mut sprite) = sprites.get_mut(grab).unwrap();
+            let (mut transform, mut sprite) = transforms.get_mut(grab).unwrap();
             transform.translation = on.translation.extend(2.);
             sprite.custom_size = Some(Vec2::new(size.x, CELL_LENGTH));
 
             // resize
-            let (mut transform, mut sprite) = sprites.get_mut(resize).unwrap();
+            let (mut transform, mut sprite) = transforms.get_mut(resize).unwrap();
             transform.translation = Vec3::new(
                 on.translation.x,
                 on.translation.y - size.y - CELL_LENGTH,
                 2.,
             );
             sprite.custom_size = Some(Vec2::new(size.x, CELL_LENGTH));
+
+            // tabs
+            let index_for_tab = sprites.as_ref().map(|sprites| sprites.tab).unwrap_or(0);
+            for (index, tab) in tabs.into_iter().enumerate() {
+                let (mut transform, mut sprite) = transforms.get_mut(tab).unwrap();
+                transform.translation = Vec3::new(
+                    on.translation.x + size.x * 0.5 + CELL_LENGTH * 0.5,
+                    on.translation.y - CELL_LENGTH * (index as f32 + 1.),
+                    1.,
+                );
+                sprite.custom_size = Some(Vec2::splat(CELL_LENGTH));
+
+                if index == index_for_tab {
+                    sprite.custom_size.as_mut().unwrap().x += CELL_LENGTH * 0.5;
+                    transform.translation.x += CELL_LENGTH * 0.25;
+                }
+            }
 
             // tiles
             let margin = 10.;
@@ -597,12 +579,15 @@ fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites,
             let mut width_remaining = size.x;
             let mut height_remaining = size.y - space_needed_for_single_tile;
 
-            let mut tiles_to_pick_iter = tiles_to_pick.iter();
+            for entity in not_sure.iter().flatten().copied() {
+                *visibility.get_mut(entity).unwrap() = Visibility::Hidden;
+            }
+
+            let mut tiles_to_pick_iter = not_sure[index_for_tab].iter();
 
             for entity in tiles_to_pick_iter.by_ref() {
                 if width_remaining < space_needed_for_single_tile {
                     if height_remaining < space_needed_for_single_tile {
-                        *visibility.get_mut(*entity).unwrap() = Visibility::Hidden;
                         break;
                     } else {
                         width_remaining = size.x;
@@ -612,16 +597,12 @@ fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites,
 
                 width_remaining -= space_needed_for_single_tile;
 
-                sprites.get_mut(*entity).unwrap().0.translation = Vec3::new(
+                transforms.get_mut(*entity).unwrap().0.translation = Vec3::new(
                     top_left_corner.x + (size.x - width_remaining) - PICKER_TILE_LENGTH * 0.5,
                     top_left_corner.y - (size.y - height_remaining) + PICKER_TILE_LENGTH * 0.5,
                     3.,
                 );
                 *visibility.get_mut(*entity).unwrap() = Visibility::Visible;
-            }
-
-            for entity in tiles_to_pick_iter {
-                *visibility.get_mut(*entity).unwrap() = Visibility::Hidden;
             }
         },
     );
@@ -679,7 +660,10 @@ fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites,
 
     let size = Vec2::splat(CELL_LENGTH) * 14. + Vec2::splat(10.);
     commands.trigger(PickerUpdate {
-        translation: Vec2::new(window.width() * -0.5 + size.x * 0.5, window.height() * 0.5 - CELL_LENGTH * 0.5),
+        translation: Vec2::new(
+            window.width() * -0.5 + size.x * 0.5,
+            window.height() * 0.5 - CELL_LENGTH * 0.5,
+        ),
         resize_delta: size,
     });
 }
@@ -687,17 +671,26 @@ fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites,
 #[derive(Resource, Default)]
 struct HoveredPickerSprite(Option<Entity>);
 
-fn picker_sprite_over(on: On<Pointer<Over>>, mut hovered_picker_sprite: ResMut<HoveredPickerSprite>) {
+fn picker_sprite_over(
+    on: On<Pointer<Over>>,
+    mut hovered_picker_sprite: ResMut<HoveredPickerSprite>,
+) {
     hovered_picker_sprite.0 = Some(on.entity);
 }
 
 fn picker_sprite_out(on: On<Pointer<Out>>, mut hovered_picker_sprite: ResMut<HoveredPickerSprite>) {
-    if let Some(entity) = hovered_picker_sprite.0 && entity == on.entity {
+    if let Some(entity) = hovered_picker_sprite.0
+        && entity == on.entity
+    {
         hovered_picker_sprite.0 = None;
     }
 }
 
-fn picker_sprite_hover_gizmo(hovered_picker_sprite: Res<HoveredPickerSprite>, transforms: Query<&Transform>, mut gizmos: Gizmos) {
+fn picker_sprite_hover_gizmo(
+    hovered_picker_sprite: Res<HoveredPickerSprite>,
+    transforms: Query<&Transform>,
+    mut gizmos: Gizmos,
+) {
     let Some(entity) = hovered_picker_sprite.0 else {
         return;
     };
@@ -706,8 +699,14 @@ fn picker_sprite_hover_gizmo(hovered_picker_sprite: Res<HoveredPickerSprite>, tr
     gizmos.rect_2d(translation, Vec2::splat(PICKER_TILE_LENGTH), RED);
 }
 
-fn draw_selected(sprites: Res<Sprites>, transforms: Query<(&Transform, &Visibility)>, mut gizmos: Gizmos) {
-    let (transform, visibility) = transforms.get(sprites.roster[sprites.selected as usize].2[sprites.rotation as usize]).unwrap();
+fn draw_selected(
+    sprites: Res<Sprites>,
+    transforms: Query<(&Transform, &Visibility)>,
+    mut gizmos: Gizmos,
+) {
+    let (transform, visibility) = transforms
+        .get(sprites.tabs[sprites.tab][sprites.selected].2)
+        .unwrap();
     if matches!(visibility, Visibility::Hidden) {
         return;
     }
@@ -718,3 +717,424 @@ fn draw_selected(sprites: Res<Sprites>, transforms: Query<(&Transform, &Visibili
     gizmos.rect_2d(translation, Vec2::splat(PICKER_TILE_LENGTH + 5.), YELLOW);
     gizmos.rect_2d(translation, Vec2::splat(PICKER_TILE_LENGTH + 10.), PURPLE);
 }
+
+#[derive(Resource)]
+struct DialogueFont(Handle<Font>);
+
+struct AfterDialogueAction<'w, 's, 'a>(&'a mut GameState, &'a mut HashMap<IVec2, Entity>, &'a mut Commands<'w, 's>);
+
+#[derive(Resource, Default)]
+// (messages, index of next message, run after)
+struct Dialogue(Option<(Vec<String>, usize, fn(AfterDialogueAction))>);
+
+impl Dialogue {
+    fn set(
+        &mut self,
+        messages: impl IntoIterator<Item = impl Into<String>>,
+        run_after: fn(AfterDialogueAction),
+    ) {
+        self.0 = Some((
+            messages.into_iter().map(|message| message.into()).collect(),
+            0,
+            run_after,
+        ));
+    }
+}
+
+#[derive(Event)]
+struct NextDialogue;
+
+fn display_dialogue(dialogue: Res<Dialogue>, mut commands: Commands) {
+    let Some(dialogue) = dialogue.0.as_ref() else {
+        return;
+    };
+
+    if dialogue.1 == 0 {
+        commands.trigger(NextDialogue);
+    }
+}
+
+fn next_dialogue(
+    _: On<NextDialogue>,
+    font: Res<DialogueFont>,
+    mut dialogue_box: Single<(Entity, &mut Visibility, &mut UiHover), With<DialogueBox>>,
+    mut maybe_dialogue: ResMut<Dialogue>,
+    mut state: ResMut<GameState>,
+    mut commands: Commands,
+    mut tiles: ResMut<Tiles>,
+) {
+    let Some(dialogue) = maybe_dialogue.0.as_mut() else {
+        return;
+    };
+    info!("Next dialogue.");
+
+    commands.entity(dialogue_box.0).despawn_children();
+    *dialogue_box.1 = Visibility::Visible;
+
+    if dialogue.1 == dialogue.0.len() {
+        dialogue.2(AfterDialogueAction(&mut state, &mut tiles.0, &mut commands));
+        maybe_dialogue.0 = None;
+        *dialogue_box.1 = Visibility::Hidden;
+        *dialogue_box.2 = UiHover(false);
+        return;
+    }
+
+    for (index, line) in dialogue.0[dialogue.1].lines().enumerate() {
+        let line = if index == 0 {
+            format!("* {line}")
+        } else {
+            format!("   {line}")
+        };
+
+        let dialogue_box_line = commands
+            .spawn(Node {
+                top: px(40),
+                left: px(40),
+                ..default()
+            })
+            .id();
+        commands.entity(dialogue_box.0).add_child(dialogue_box_line);
+        let mut dialogue_box_line = commands.entity(dialogue_box_line);
+
+        for char in line.chars() {
+            dialogue_box_line.with_child((
+                Text::new(char),
+                TextFont {
+                    font: font.0.clone(),
+                    font_size: 40.,
+                    ..default()
+                },
+            ));
+            dialogue_box_line.with_child((
+                Text::new(" "),
+                TextFont {
+                    font: font.0.clone(),
+                    font_size: 15.,
+                    ..default()
+                },
+            ));
+        }
+    }
+
+    dialogue.1 += 1;
+}
+
+#[derive(Component)]
+struct DialogueBox;
+
+#[derive(Component)]
+struct DoneButton;
+
+fn spawn_dialogue_box(commands: &mut Commands, asset_server: &AssetServer) {
+    const SCALE: f32 = 1.5;
+
+    let font = asset_server.load("8bitoperator_jve.ttf");
+    let cloned_font = font.clone();
+    commands.insert_resource(DialogueFont(font));
+
+    commands
+        .spawn((
+            Pickable {
+                should_block_lower: false,
+                is_hoverable: false,
+            },
+            Node {
+                width: percent(100),
+                height: percent(100),
+                align_items: AlignItems::End,
+                justify_content: JustifyContent::End,
+                ..default()
+            },
+        ))
+        .with_children(|builder| {
+            builder
+                .spawn((
+                    UiHover(false),
+                    UiDragged(false),
+                    Visibility::Hidden,
+                    DoneButton,
+                    Node {
+                        margin: px(5).all(),
+                        width: px(150),
+                        height: px(70),
+                        border: px(5).all(),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border_radius: BorderRadius::MAX,
+                        ..default()
+                    },
+                    BorderColor::all(WHITE),
+                    BackgroundColor(GREEN.into()),
+                ))
+                .with_children(|builder| {
+                    builder.spawn((
+                        Text::new("DONE"),
+                        TextFont {
+                            font: cloned_font,
+                            font_size: 40.,
+                            ..default()
+                        },
+                        TextColor(WHITE.into()),
+                    ));
+                })
+                .observe(|on: On<Pointer<Over>>, mut hover: Query<&mut UiHover>| {
+                    hover.get_mut(on.entity).unwrap().0 = true;
+                })
+                .observe(|on: On<Pointer<Out>>, mut hover: Query<&mut UiHover>| {
+                    hover.get_mut(on.entity).unwrap().0 = false;
+                })
+                .observe(
+                    |on: On<Pointer<Click>>, mut button: Query<(&mut Visibility, &mut UiHover)>, mut state: ResMut<GameState>| {
+                        let mut button = button.get_mut(on.entity).unwrap();
+
+                        *button.0 = Visibility::Hidden;
+                        button.1.0 = false;
+
+                        let GameState::Build(build) = &mut *state else {
+                            error!("Somehow the DONE button was pressed in the wrong state!");
+                            return;
+                        };
+
+                        build.done = true;
+                    },
+                );
+        });
+
+    commands
+        .spawn((
+            Visibility::Hidden,
+            Interaction::None,
+            Pickable {
+                should_block_lower: true,
+                is_hoverable: true,
+            },
+            UiHover(false),
+            UiDragged(false),
+            DialogueBox,
+            Node {
+                align_items: AlignItems::Start,
+                justify_content: JustifyContent::Start,
+                width: px(593. * SCALE),
+                height: px(167. * SCALE),
+                flex_direction: FlexDirection::Column,
+                justify_self: JustifySelf::End,
+                ..default()
+            },
+            ImageNode {
+                image: asset_server.load("box.png"),
+                image_mode: NodeImageMode::Auto,
+                ..default()
+            },
+        ))
+        .observe(|on: On<Pointer<Over>>, mut hover: Query<&mut UiHover>| {
+            hover.get_mut(on.entity).unwrap().0 = true;
+        })
+        .observe(|on: On<Pointer<Out>>, mut hover: Query<&mut UiHover>| {
+            hover.get_mut(on.entity).unwrap().0 = false;
+        })
+        .observe(|_: On<Pointer<Click>>, mut commands: Commands| {
+            commands.trigger(NextDialogue);
+        });
+}
+
+struct Build {
+    seconds_spent: f32,
+
+    done: bool,
+
+    dialogue_seconds_remaining: f32,
+
+    blueprint_seconds_remaining: f32,
+    blue_print_entities: Vec<Entity>,
+
+    tiles: BuildTiles,
+}
+
+#[derive(Resource, Default)]
+enum GameState {
+    #[default]
+    Paused,
+    Rest(f32),
+    Build(Build),
+}
+
+impl GameState {
+    const REST: Self = GameState::Rest(2.);
+}
+
+fn game_state(
+    mut state: ResMut<GameState>,
+    time: Res<Time>,
+    mut dialogue: ResMut<Dialogue>,
+    mut commands: Commands,
+    sprites: Res<Sprites>,
+    mut visibility: Query<&mut Visibility, Without<DoneButton>>,
+    mut done: Single<&mut Visibility, With<DoneButton>>,
+    tiles: Res<Tiles>,
+    sprite_markers: Query<&SpriteMarker>,
+) {
+    match &mut *state {
+        GameState::Paused => (),
+        GameState::Rest(seconds_remaining) => {
+            *seconds_remaining -= time.delta_secs();
+
+            if *seconds_remaining < 0. {
+                let build_tiles = BUILD_TILES[rand::random_range(0..BUILD_TILES.len())];
+                dialogue.set([format!("MIKE, {}, please!", build_tiles.0)], |_| {});
+                **done = Visibility::Visible;
+                *state = GameState::Build(Build {
+                    seconds_spent: 0.,
+
+                    done: false,
+
+                    dialogue_seconds_remaining: 5.,
+
+                    blueprint_seconds_remaining: 10.,
+                    blue_print_entities: build_tiles.1
+                        .iter()
+                        .map(|(x, y, tab, selected)| {
+                            let selected = sprites.tabs[*tab][*selected];
+
+                            let mut sprite = Sprite::from_atlas_image(
+                                sprites.texture.clone(),
+                                TextureAtlas {
+                                    layout: sprites.texture_atlas_layouts[selected.0].clone(),
+                                    index: selected.1,
+                                },
+                            );
+                            sprite.custom_size = Some(Vec2::splat(CELL_LENGTH));
+                            sprite.color = Color::srgba(0.8, 0.8, 1., 0.3);
+
+                            commands
+                                .spawn((
+                                    Transform::from_translation(
+                                        grid_to_world(IVec2::new(*x, *y)).extend(-1.),
+                                    ),
+                                    sprite,
+                                ))
+                                .id()
+                        })
+                        .collect(),
+
+                    tiles: build_tiles,
+                });
+            }
+        }
+        GameState::Build(build) => {
+            let mut clear_dialogue = || {
+                let empty: [&'static str; 0] = [];
+                dialogue.set(empty, |_| {});
+            };
+            let mut clear_blueprints = || {
+                for entity in build.blue_print_entities.iter().copied() {
+                    *visibility.get_mut(entity).unwrap() = Visibility::Hidden;
+                }
+            };
+
+            let time_delta_seconds = time.delta_secs();
+            build.seconds_spent += time_delta_seconds;
+
+            if build.done {
+                //clear_dialogue();
+                clear_blueprints();
+
+                info!("{}", build.seconds_spent);
+                let mut time_taken_string = String::new();
+
+                let all_seconds = build.seconds_spent as u32;
+                let seconds = all_seconds % 60;
+                let all_minutes = all_seconds / 60;
+
+                if all_minutes != 0 {
+                    time_taken_string.push_str(&format!("{all_minutes} minutes, and"));
+                }
+                time_taken_string.push_str(&format!("{seconds} seconds"));
+
+                let mut tiles_placed: Vec<(i32, i32, usize, usize)> = tiles
+                    .0
+                    .iter()
+                    .map(|(translation, entity)| {
+                        let sprite_marker = sprite_markers.get(*entity).unwrap();
+                        (
+                            translation.x,
+                            translation.y,
+                            sprite_marker.0,
+                            sprite_marker.1,
+                        )
+                    })
+                    .collect();
+
+                let mut missing_tiles = 0;
+                let mut wrong_tiles = 0;
+                let mut correct_tiles = 0;
+                for (x, y, tab, selected) in build.tiles.1 {
+                    if let Some((index, placed_tab, placed_selected)) = tiles_placed.iter().enumerate().find_map(|(index, (placed_x, placed_y, placed_tab, placed_selected))| {
+                        if x == placed_x && y == placed_y {
+                            Some((index, placed_tab, placed_selected))
+                        } else {
+                            None
+                        }
+                    }) {
+                        if tab == placed_tab && selected == placed_selected {
+                            correct_tiles += 1;
+                        } else {
+                            wrong_tiles += 1;
+                        }
+                        // Save a little bit of time for future searches. Can't have two tiles in the same place.
+                        // It also allows us to calculate unnecessary tiles.
+                        tiles_placed.swap_remove(index);
+                    } else {
+                        missing_tiles += 1;
+                    }
+                }
+                let percent_correct = ((correct_tiles as f32 / build.tiles.1.len() as f32) * 100.).round() as u32;
+                let unnecessary = tiles_placed.len();
+
+                dialogue.set([format!("Thank you Mike!\nYou took {time_taken_string}."), format!("You were {percent_correct}% correct.\nYou used {wrong_tiles} wrong tiles.\nYou missed {missing_tiles} tiles.\nYou placed {unnecessary} unnecessary tiles.")], |state| {
+                    *state.0 = GameState::REST;
+                    for (_, entity) in state.1.drain() {
+                        state.2.entity(entity).despawn();
+                    }
+                });
+
+                *state = GameState::Paused;
+                return;
+            }
+
+            if build.dialogue_seconds_remaining >= 0. {
+                build.dialogue_seconds_remaining -= time_delta_seconds;
+
+                if build.dialogue_seconds_remaining < 0. {
+                    clear_dialogue();
+                }
+            }
+
+            if build.blueprint_seconds_remaining >= 0. {
+                build.blueprint_seconds_remaining -= time_delta_seconds;
+
+                if build.blueprint_seconds_remaining < 0. {
+                    clear_blueprints()
+                }
+            }
+        }
+    }
+}
+
+type BuildTiles = (&'static str, &'static [(i32, i32, usize, usize)]);
+
+const BUILD_TILES: &[BuildTiles] = &[STATUE];
+
+const STATUE: BuildTiles = ("build me a statue", &[
+    (4, 2, 1, 180),
+    (6, 2, 1, 182),
+    (4, 1, 1, 200),
+    (4, 3, 1, 160),
+    (5, 2, 1, 181),
+    (6, 1, 1, 202),
+    (4, 0, 1, 220),
+    (6, 0, 1, 222),
+    (6, 3, 1, 162),
+    (5, 0, 1, 221),
+    (5, 1, 1, 201),
+    (5, 3, 1, 161),
+]);

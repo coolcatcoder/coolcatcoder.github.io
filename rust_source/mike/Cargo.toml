@@ -25,7 +25,10 @@ bevy = { version = "0.18", default-features = false, features = [
     "bevy_ui_render",
     "sprite_picking",
     "bevy_picking",
+    "ui_picking",
 ] }
+rand = "0.10.0"
+getrandom = { version = "0.4.1", default-features = false, features = ["wasm_js"]}
 
 [[example]]
 name = "bin"
