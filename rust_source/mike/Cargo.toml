@@ -38,4 +38,5 @@ path = "src/bin.rs"
 bevy = { version = "0.18", default-features = false, features = [
     "x11",
     "dynamic_linking",
+    "debug"
 ] }

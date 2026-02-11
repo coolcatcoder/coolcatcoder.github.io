@@ -8,6 +8,7 @@ use bevy::{
     color::palettes::css::{
         BLACK, BROWN, GREEN, LIGHT_BLUE, LIGHT_GREEN, PURPLE, RED, WHITE, YELLOW,
     },
+    diagnostic::FrameCount,
     prelude::*,
     window::{PrimaryWindow, WindowRef, WindowResolution},
 };
@@ -45,8 +46,8 @@ pub fn plugin(app: &mut App) {
                 (draw_cursor,).after(cursor_translation),
             ),
         )
-        .init_resource::<CursorGridTranslation>()
-        .init_resource::<CursorWorldTranslation>()
+        .init_resource::<InteractionTranslation>()
+        .init_resource::<CursorTranslation>()
         .init_resource::<Tiles>()
         .init_resource::<HoveredPickerSprite>()
         .init_resource::<GameState>()
@@ -54,6 +55,8 @@ pub fn plugin(app: &mut App) {
             require_markers: false,
             picking_mode: SpritePickingMode::BoundingBox,
         })
+        .add_observer(on_press)
+        .add_observer(on_drag)
         .add_observer(place)
         .add_observer(erase)
         .add_observer(next_dialogue)
@@ -77,8 +80,8 @@ fn start(
     ));
     commands
         .entity(primary_window.0)
-        .observe(place_press)
-        .observe(place_drag)
+        .observe(window_on_press)
+        .observe(window_on_drag)
         .observe(rotation);
 
     let texture_atlas_layouts: Vec<Handle<TextureAtlasLayout>> = [
@@ -112,27 +115,31 @@ fn start(
     .collect();
 
     #[allow(clippy::single_range_in_vec_init)]
-    let tabs: [&[(usize, &[Range<usize>])]; _] = [
-        &[(0, &[0..280])],
+    let tabs: [&[(usize, bool, &[Range<usize>])]; _] = [
+        &[(0, false, &[0..280])],
         &[
-            (0, &[280..539]),
-            (2, &[0..3]),
-            (3, &[0..3]),
-            (4, &[0..5]),
-            (5, &[0..5]),
+            (0, false, &[280..539]),
+            (2, false, &[0..3]),
+            (3, false, &[0..3]),
+            (4, false, &[0..4]),
+            (5, false, &[0..5]),
+            (5, true, &[0..5]),
+            (2, true, &[2..3]),
         ],
     ];
-    let tabs: Vec<Vec<(usize, usize, Entity)>> = tabs
+    let tabs: Vec<Vec<(usize, usize, Entity, bool)>> = tabs
         .into_iter()
         .map(|sprites| {
             sprites
                 .iter()
-                .flat_map(|(layout, sprite_ranges)| {
+                .flat_map(|(layout, flip_x, sprite_ranges)| {
                     sprite_ranges.iter().cloned().flat_map(move |sprite_range| {
-                        sprite_range.map(move |sprite_index| (layout, sprite_index))
+                        sprite_range.map(move |sprite_index| (layout, sprite_index, *flip_x))
                     })
                 })
-                .map(|(layout, sprite)| (*layout, sprite, commands.spawn_empty().id()))
+                .map(|(layout, sprite, flip_x)| {
+                    (*layout, sprite, commands.spawn_empty().id(), flip_x)
+                })
                 .collect()
         })
         .collect();
@@ -147,7 +154,7 @@ fn start(
     // }).id();
     // commands.spawn((Camera2d, RenderTarget::Window(WindowRef::Entity(secondary_window)), RenderLayers::layer(1)));
 
-    commands.spawn((Sprite::from_image(texture.clone()), RenderLayers::layer(1)));
+    //commands.spawn((Sprite::from_image(texture.clone()), RenderLayers::layer(1)));
 
     let mut sprite = Sprite::from_atlas_image(
         texture.clone(),
@@ -188,42 +195,187 @@ fn start(
 }
 
 #[derive(Resource, Default)]
-struct CursorGridTranslation(Option<IVec2>);
+struct InteractionTranslation {
+    screen: Vec2,
+    /// Will be identical to screen, unless in the middle of a drag.
+    screen_before_drag: Vec2,
 
-#[derive(Resource, Default)]
-struct CursorWorldTranslation(Option<Vec2>);
+    world: Vec2,
+    grid: IVec2,
+}
+
+#[derive(EntityEvent)]
+struct WorldPress {
+    entity: Entity,
+    translation: Vec2,
+    button: PointerButton,
+}
+
+#[derive(EntityEvent)]
+struct WorldDrag {
+    entity: Entity,
+    translation: Vec2,
+    button: PointerButton,
+}
+
+fn on_press(
+    mut on: On<Pointer<Press>>,
+    mut interaction_translation: ResMut<InteractionTranslation>,
+    camera: Single<(&Camera, &GlobalTransform), With<CameraOnPrimaryWindow>>,
+    sprite: Query<(), With<Sprite>>,
+    mut commands: Commands,
+) {
+    info!("Pressed. {:?}", on.hit.position);
+
+    if sprite.get(on.entity).is_ok() {
+        on.propagate(false);
+        info!("Sprite");
+        interaction_translation.world = on.hit.position.unwrap().xy();
+
+        let Some(screen_translation) = world_to_screen(interaction_translation.world, *camera) else {
+            error!("I truly do not know.");
+            return;
+        };
+        interaction_translation.screen = screen_translation;
+        interaction_translation.screen_before_drag = screen_translation;
+    } else {
+        let Some(screen_translation) = on.hit.position.map(|translation| translation.xy()) else {
+            return;
+        };
+        interaction_translation.screen = screen_translation;
+        interaction_translation.screen_before_drag = screen_translation;
+
+        let Some(world_translation) = screen_to_world(interaction_translation.screen, *camera) else {
+            return;
+        };
+        interaction_translation.world = world_translation;
+    }
+
+    commands.trigger(WorldPress {
+        entity: on.entity,
+        translation: interaction_translation.world,
+        button: on.button,
+    });
+}
+
+fn on_drag(
+    on: On<Pointer<Drag>>,
+    mut interaction_translation: ResMut<InteractionTranslation>,
+    camera: Single<(&Camera, &GlobalTransform), With<CameraOnPrimaryWindow>>,
+    mut previous_delta: Local<Vec2>,
+    frame_count: Res<FrameCount>,
+    mut commands: Commands,
+) {
+    if on.delta != *previous_delta || frame_count.is_changed() {
+        //info!("Changed.");
+        *previous_delta = on.delta;
+        interaction_translation.screen = interaction_translation.screen_before_drag + on.distance;
+
+        let Some(world_translation) = screen_to_world(interaction_translation.screen, *camera)
+        else {
+            error!("screen_to_world failed");
+            return;
+        };
+        interaction_translation.world = world_translation;
+    }
+
+    //info!("WorldDrag");
+
+    commands.trigger(WorldDrag {
+        entity: on.entity,
+        translation: interaction_translation.world,
+        button: on.button,
+    });
+}
+
+// Place and Erase trigger when the user interacts with the grid, using their respective buttons.
+#[derive(Event)]
+struct Place(IVec2);
+#[derive(Event)]
+struct Erase(IVec2);
+
+impl Place {
+    fn world(&self) -> Vec2 {
+        grid_to_world(self.0)
+    }
+}
+
+fn window_on_press(
+    on: On<WorldPress>,
+    mut interaction_translation: ResMut<InteractionTranslation>,
+    mut commands: Commands,
+) {
+    interaction_translation.grid = world_to_nearest_grid(on.translation);
+    match on.button {
+        PointerButton::Primary => commands.trigger(Place(interaction_translation.grid)),
+        PointerButton::Secondary => commands.trigger(Erase(interaction_translation.grid)),
+        PointerButton::Middle => (),
+    }
+}
+
+fn window_on_drag(
+    on: On<WorldDrag>,
+    mut interaction_translation: ResMut<InteractionTranslation>,
+    mut commands: Commands,
+) {
+    let grid_translation = world_to_nearest_grid(on.translation);
+
+    if grid_translation == interaction_translation.grid {
+        return;
+    }
+    interaction_translation.grid = grid_translation;
+
+    match on.button {
+        PointerButton::Primary => commands.trigger(Place(interaction_translation.grid)),
+        PointerButton::Secondary => commands.trigger(Erase(interaction_translation.grid)),
+        PointerButton::Middle => (),
+    }
+}
 
 fn grid_to_world(grid_translation: IVec2) -> Vec2 {
     grid_translation.as_vec2() * CELL_LENGTH + (CELL_LENGTH * 0.5)
 }
 
+fn screen_to_world(screen_translation: Vec2, camera: (&Camera, &GlobalTransform)) -> Option<Vec2> {
+    let (camera, camera_transform) = camera;
+    camera
+        .viewport_to_world(camera_transform, screen_translation)
+        .ok()
+        .map(|ray| ray.origin.xy())
+}
+
+fn world_to_screen(world_translation: Vec2, camera: (&Camera, &GlobalTransform)) -> Option<Vec2> {
+    let (camera, camera_transform) = camera;
+    camera
+        .world_to_viewport(camera_transform, world_translation.extend(0.))
+        .ok()
+}
+
+fn world_to_nearest_grid(world_translation: Vec2) -> IVec2 {
+    let nearest_cell = (world_translation / CELL_LENGTH).floor();
+    nearest_cell.as_ivec2()
+}
+
 #[derive(Component)]
 struct CameraOnPrimaryWindow;
 
+#[derive(Resource, Default)]
+struct CursorTranslation {
+    grid: Option<IVec2>,
+}
+
 fn cursor_translation(
-    mut cursor_grid_translation: ResMut<CursorGridTranslation>,
-    mut cursor_world_translation: ResMut<CursorWorldTranslation>,
+    mut cursor_translation: ResMut<CursorTranslation>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<CameraOnPrimaryWindow>>,
 ) {
-    let previous = cursor_grid_translation.0;
-
     let (camera, camera_transform) = *camera;
 
-    cursor_world_translation.0 = window
+    let cursor_world_translation = window
         .cursor_position()
-        .and_then(|cursor| camera.viewport_to_world(camera_transform, cursor).ok())
-        .map(|ray| ray.origin.xy());
+        .and_then(|cursor| screen_to_world(cursor, (camera, camera_transform)));
 
-    cursor_grid_translation.bypass_change_detection().0 =
-        cursor_world_translation.0.map(|cursor_world_translation| {
-            let nearest_cell = (cursor_world_translation / CELL_LENGTH).floor();
-            nearest_cell.as_ivec2()
-        });
-
-    if previous != cursor_grid_translation.0 {
-        cursor_grid_translation.set_changed();
-    }
+    cursor_translation.grid = cursor_world_translation.map(world_to_nearest_grid);
 }
 
 #[derive(Component)]
@@ -232,11 +384,12 @@ struct CursorSprite;
 
 fn draw_cursor(
     mut cursor_sprite: Single<(&mut Transform, &mut Visibility), With<CursorSprite>>,
-    cursor_grid_translation: Res<CursorGridTranslation>,
+    cursor_translation: Res<CursorTranslation>,
     mut gizmos: Gizmos,
     ui: Query<(&UiHover, &UiDragged)>,
+    interaction_translation: Res<InteractionTranslation>,
 ) {
-    let Some(cursor_grid_translation) = cursor_grid_translation.0 else {
+    let Some(cursor_grid_translation) = cursor_translation.grid else {
         *cursor_sprite.1 = Visibility::Hidden;
         return;
     };
@@ -254,6 +407,8 @@ fn draw_cursor(
     cursor_sprite.0.translation = cursor_world_translation.extend(1.);
 
     gizmos.rect_2d(cursor_world_translation, Vec2::splat(CELL_LENGTH), RED);
+    #[cfg(target_os = "linux")]
+    gizmos.circle_2d(interaction_translation.world, 1., RED);
 }
 
 #[derive(Component)]
@@ -265,8 +420,8 @@ struct Sprites {
     selected: usize,
 
     texture_atlas_layouts: Vec<Handle<TextureAtlasLayout>>,
-    // (texture_atlas_layouts index, atlas index, picker sprite)
-    tabs: Vec<Vec<(usize, usize, Entity)>>,
+    // (texture_atlas_layouts index, atlas index, picker sprite, flipped x)
+    tabs: Vec<Vec<(usize, usize, Entity, bool)>>,
     texture: Handle<Image>,
 }
 
@@ -282,6 +437,7 @@ impl Sprites {
             },
         );
         sprite.custom_size = Some(Vec2::splat(CELL_LENGTH));
+        sprite.flip_x = selected.3;
 
         sprite
     }
@@ -294,51 +450,13 @@ impl Sprites {
 #[derive(Resource, Default)]
 struct Tiles(HashMap<IVec2, Entity>);
 
-// Situations we want to place on:
-// Mouse down start.
-// Mouse down and change of CursorGridTranslation.
-
-#[derive(Event)]
-struct Place;
-
-#[derive(Event)]
-struct Erase;
-
-fn place_drag(
-    on: On<Pointer<Drag>>,
-    cursor_grid_translation: Res<CursorGridTranslation>,
-    mut commands: Commands,
-) {
-    if !cursor_grid_translation.is_changed() {
-        return;
-    }
-    match on.button {
-        PointerButton::Primary => commands.trigger(Place),
-        PointerButton::Secondary => commands.trigger(Erase),
-        PointerButton::Middle => (),
-    }
-}
-
-fn place_press(on: On<Pointer<Press>>, mut commands: Commands) {
-    match on.button {
-        PointerButton::Primary => commands.trigger(Place),
-        PointerButton::Secondary => commands.trigger(Erase),
-        PointerButton::Middle => (),
-    }
-}
-
-
 fn erase(
-    _: On<Erase>,
-    cursor_grid_translation: Res<CursorGridTranslation>,
+    on: On<Erase>,
     mut tiles: ResMut<Tiles>,
     ui: Query<(&UiHover, &UiDragged)>,
     sprite_markers: Query<&SpriteMarker>,
     mut commands: Commands,
 ) {
-    let Some(cursor_grid_translation) = cursor_grid_translation.0 else {
-        return;
-    };
     if !ui
         .iter()
         .all(|(hovered, dragged)| !(hovered.0 || dragged.0))
@@ -366,23 +484,19 @@ fn erase(
         info!("{:?}", debug_tiles);
     }
 
-    if let Some(previous_tile) = tiles.0.remove(&cursor_grid_translation) {
+    if let Some(previous_tile) = tiles.0.remove(&on.0) {
         commands.entity(previous_tile).despawn();
         info!("Removed previous.");
     }
 }
 
 fn place(
-    _: On<Place>,
+    on: On<Place>,
     mut commands: Commands,
     sprites: Res<Sprites>,
-    cursor_grid_translation: Res<CursorGridTranslation>,
     mut tiles: ResMut<Tiles>,
     ui: Query<(&UiHover, &UiDragged)>,
 ) {
-    let Some(cursor_grid_translation) = cursor_grid_translation.0 else {
-        return;
-    };
     if !ui
         .iter()
         .all(|(hovered, dragged)| !(hovered.0 || dragged.0))
@@ -394,13 +508,13 @@ fn place(
 
     let tile = commands
         .spawn((
-            Transform::from_translation(grid_to_world(cursor_grid_translation).extend(0.)),
+            Transform::from_translation(on.world().extend(0.)),
             sprites.sprite(),
             sprites.sprite_marker(),
         ))
         .id();
 
-    if let Some(previous_tile) = tiles.0.insert(cursor_grid_translation, tile) {
+    if let Some(previous_tile) = tiles.0.insert(on.0, tile) {
         commands.entity(previous_tile).despawn();
         info!("Removed previous.");
     }
@@ -445,7 +559,7 @@ fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites,
             tab_sprites
 .iter().copied()
         .enumerate()
-        .map(|(index, (layout_index, sprite_index, entity))| {
+        .map(|(index, (layout_index, sprite_index, entity, flip_x))| {
 
                 let mut sprite = Sprite::from_atlas_image(
                     sprites.texture.clone(),
@@ -455,6 +569,7 @@ fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites,
                     },
                 );
                 sprite.custom_size = Some(Vec2::splat(PICKER_TILE_LENGTH));
+                sprite.flip_x = flip_x;
                 (entity, (
                     sprite,
                     SpritePicker(index),
@@ -610,15 +725,10 @@ fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites,
     commands
         .entity(grab)
         .observe(
-            |_: On<Pointer<Drag>>,
-             cursor_world_translation: Res<CursorWorldTranslation>,
+            |on: On<WorldDrag>,
              mut commands: Commands| {
-                let Some(cursor_world_translation) = cursor_world_translation.0 else {
-                    return;
-                };
-
                 commands.trigger(PickerUpdate {
-                    translation: cursor_world_translation,
+                    translation: on.translation,
                     resize_delta: Vec2::ZERO,
                 });
             },
@@ -721,7 +831,11 @@ fn draw_selected(
 #[derive(Resource)]
 struct DialogueFont(Handle<Font>);
 
-struct AfterDialogueAction<'w, 's, 'a>(&'a mut GameState, &'a mut HashMap<IVec2, Entity>, &'a mut Commands<'w, 's>);
+struct AfterDialogueAction<'w, 's, 'a>(
+    &'a mut GameState,
+    &'a mut HashMap<IVec2, Entity>,
+    &'a mut Commands<'w, 's>,
+);
 
 #[derive(Resource, Default)]
 // (messages, index of next message, run after)
@@ -884,7 +998,9 @@ fn spawn_dialogue_box(commands: &mut Commands, asset_server: &AssetServer) {
                     hover.get_mut(on.entity).unwrap().0 = false;
                 })
                 .observe(
-                    |on: On<Pointer<Click>>, mut button: Query<(&mut Visibility, &mut UiHover)>, mut state: ResMut<GameState>| {
+                    |on: On<Pointer<Click>>,
+                     mut button: Query<(&mut Visibility, &mut UiHover)>,
+                     mut state: ResMut<GameState>| {
                         let mut button = button.get_mut(on.entity).unwrap();
 
                         *button.0 = Visibility::Hidden;
@@ -980,7 +1096,7 @@ fn game_state(
 
             if *seconds_remaining < 0. {
                 let build_tiles = BUILD_TILES[rand::random_range(0..BUILD_TILES.len())];
-                dialogue.set([format!("MIKE, {}, please!", build_tiles.0)], |_| {});
+                dialogue.set([format!("MIKE, {}, please!", build_tiles.1)], |_| {});
                 **done = Visibility::Visible;
                 *state = GameState::Build(Build {
                     seconds_spent: 0.,
@@ -989,8 +1105,9 @@ fn game_state(
 
                     dialogue_seconds_remaining: 5.,
 
-                    blueprint_seconds_remaining: 10.,
-                    blue_print_entities: build_tiles.1
+                    blueprint_seconds_remaining: build_tiles.2,
+                    blue_print_entities: build_tiles
+                        .0
                         .iter()
                         .map(|(x, y, tab, selected)| {
                             let selected = sprites.tabs[*tab][*selected];
@@ -1003,6 +1120,7 @@ fn game_state(
                                 },
                             );
                             sprite.custom_size = Some(Vec2::splat(CELL_LENGTH));
+                            sprite.flip_x = selected.3;
                             sprite.color = Color::srgba(0.8, 0.8, 1., 0.3);
 
                             commands
@@ -1016,7 +1134,7 @@ fn game_state(
                         })
                         .collect(),
 
-                    tiles: build_tiles,
+                    tiles: build_tiles.0,
                 });
             }
         }
@@ -1046,7 +1164,7 @@ fn game_state(
                 let all_minutes = all_seconds / 60;
 
                 if all_minutes != 0 {
-                    time_taken_string.push_str(&format!("{all_minutes} minutes, and"));
+                    time_taken_string.push_str(&format!("{all_minutes} minutes, and "));
                 }
                 time_taken_string.push_str(&format!("{seconds} seconds"));
 
@@ -1067,14 +1185,18 @@ fn game_state(
                 let mut missing_tiles = 0;
                 let mut wrong_tiles = 0;
                 let mut correct_tiles = 0;
-                for (x, y, tab, selected) in build.tiles.1 {
-                    if let Some((index, placed_tab, placed_selected)) = tiles_placed.iter().enumerate().find_map(|(index, (placed_x, placed_y, placed_tab, placed_selected))| {
-                        if x == placed_x && y == placed_y {
-                            Some((index, placed_tab, placed_selected))
-                        } else {
-                            None
-                        }
-                    }) {
+                for (x, y, tab, selected) in build.tiles {
+                    if let Some((index, placed_tab, placed_selected)) =
+                        tiles_placed.iter().enumerate().find_map(
+                            |(index, (placed_x, placed_y, placed_tab, placed_selected))| {
+                                if x == placed_x && y == placed_y {
+                                    Some((index, placed_tab, placed_selected))
+                                } else {
+                                    None
+                                }
+                            },
+                        )
+                    {
                         if tab == placed_tab && selected == placed_selected {
                             correct_tiles += 1;
                         } else {
@@ -1087,7 +1209,8 @@ fn game_state(
                         missing_tiles += 1;
                     }
                 }
-                let percent_correct = ((correct_tiles as f32 / build.tiles.1.len() as f32) * 100.).round() as u32;
+                let percent_correct =
+                    ((correct_tiles as f32 / build.tiles.len() as f32) * 100.).round() as u32;
                 let unnecessary = tiles_placed.len();
 
                 dialogue.set([format!("Thank you Mike!\nYou took {time_taken_string}."), format!("You were {percent_correct}% correct.\nYou used {wrong_tiles} wrong tiles.\nYou missed {missing_tiles} tiles.\nYou placed {unnecessary} unnecessary tiles.")], |state| {
@@ -1120,11 +1243,14 @@ fn game_state(
     }
 }
 
-type BuildTiles = (&'static str, &'static [(i32, i32, usize, usize)]);
+type BuildTiles = &'static [(i32, i32, usize, usize)];
 
-const BUILD_TILES: &[BuildTiles] = &[STATUE];
+const BUILD_TILES: &[(BuildTiles, &str, f32)] = &[
+    (STATUE, "build me a statue", 10.),
+    (SHELTER, "construct the shelter", 30.),
+];
 
-const STATUE: BuildTiles = ("build me a statue", &[
+const STATUE: BuildTiles = &[
     (4, 2, 1, 180),
     (6, 2, 1, 182),
     (4, 1, 1, 200),
@@ -1137,4 +1263,103 @@ const STATUE: BuildTiles = ("build me a statue", &[
     (5, 0, 1, 221),
     (5, 1, 1, 201),
     (5, 3, 1, 161),
-]);
+];
+
+const SHELTER: BuildTiles = &[
+    (1, -5, 1, 229),
+    (3, -4, 1, 229),
+    (-2, -3, 1, 261),
+    (-1, -3, 1, 229),
+    (1, -3, 1, 229),
+    (-2, -2, 1, 261),
+    (-1, -1, 1, 229),
+    (3, -6, 1, 263),
+    (4, -3, 1, 209),
+    (9, -3, 1, 279),
+    (-1, -5, 1, 230),
+    (0, -5, 1, 229),
+    (3, -5, 1, 229),
+    (-2, 0, 1, 261),
+    (-1, -2, 1, 229),
+    (0, -3, 1, 229),
+    (4, -5, 1, 229),
+    (7, -5, 1, 229),
+    (4, -2, 1, 189),
+    (5, -5, 1, 229),
+    (7, -2, 1, 229),
+    (3, 0, 1, 229),
+    (-2, -1, 1, 261),
+    (-2, -6, 1, 260),
+    (7, -6, 1, 264),
+    (8, -1, 1, 230),
+    (2, -3, 1, 207),
+    (6, -3, 1, 229),
+    (9, -6, 1, 259),
+    (7, -3, 1, 229),
+    (4, 1, 1, 229),
+    (9, -5, 1, 279),
+    (2, -5, 1, 229),
+    (-1, 1, 1, 270),
+    (1, 0, 1, 229),
+    (0, 1, 1, 271),
+    (0, -2, 1, 229),
+    (6, -4, 1, 229),
+    (9, -2, 1, 279),
+    (3, 1, 1, 229),
+    (0, 0, 1, 229),
+    (5, -4, 1, 229),
+    (5, -2, 1, 190),
+    (7, -4, 1, 230),
+    (4, -4, 1, 229),
+    (-1, -4, 1, 229),
+    (6, -5, 1, 229),
+    (9, -4, 1, 279),
+    (-1, 0, 1, 229),
+    (8, -5, 1, 229),
+    (5, -1, 1, 170),
+    (6, -6, 1, 263),
+    (1, 1, 1, 272),
+    (7, -1, 1, 229),
+    (1, -2, 1, 229),
+    (2, -4, 1, 229),
+    (2, -1, 1, 167),
+    (6, 1, 1, 277),
+    (8, -6, 1, 262),
+    (6, 0, 1, 229),
+    (7, 0, 1, 229),
+    (1, -6, 1, 264),
+    (3, -1, 1, 168),
+    (0, -1, 1, 230),
+    (-2, -5, 1, 261),
+    (0, -4, 1, 229),
+    (3, -3, 1, 208),
+    (2, -6, 1, 262),
+    (8, -2, 1, 229),
+    (-1, -6, 1, 262),
+    (9, 0, 1, 279),
+    (8, 1, 1, 275),
+    (6, -1, 1, 229),
+    (1, -4, 1, 229),
+    (4, -6, 1, 264),
+    (-2, -4, 1, 261),
+    (7, 1, 1, 276),
+    (4, 0, 1, 229),
+    (1, -1, 1, 229),
+    (4, -1, 1, 169),
+    (5, 0, 1, 229),
+    (6, -2, 1, 229),
+    (9, -1, 1, 279),
+    (3, -2, 1, 188),
+    (2, 1, 1, 273),
+    (2, 0, 1, 229),
+    (8, 0, 1, 229),
+    (5, -3, 1, 210),
+    (8, -4, 1, 229),
+    (2, -2, 1, 187),
+    (-2, 1, 1, 269),
+    (8, -3, 1, 229),
+    (0, -6, 1, 263),
+    (9, 1, 1, 274),
+    (5, -6, 1, 262),
+    (5, 1, 1, 278),
+];
