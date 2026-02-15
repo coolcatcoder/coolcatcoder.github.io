@@ -51,6 +51,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<Tiles>()
         .init_resource::<HoveredPickerSprite>()
         .init_resource::<GameState>()
+        .init_resource::<Mode>()
         .insert_resource(SpritePickingSettings {
             require_markers: false,
             picking_mode: SpritePickingMode::BoundingBox,
@@ -232,7 +233,8 @@ fn on_press(
         info!("Sprite");
         interaction_translation.world = on.hit.position.unwrap().xy();
 
-        let Some(screen_translation) = world_to_screen(interaction_translation.world, *camera) else {
+        let Some(screen_translation) = world_to_screen(interaction_translation.world, *camera)
+        else {
             error!("I truly do not know.");
             return;
         };
@@ -245,7 +247,8 @@ fn on_press(
         interaction_translation.screen = screen_translation;
         interaction_translation.screen_before_drag = screen_translation;
 
-        let Some(world_translation) = screen_to_world(interaction_translation.screen, *camera) else {
+        let Some(world_translation) = screen_to_world(interaction_translation.screen, *camera)
+        else {
             return;
         };
         interaction_translation.world = world_translation;
@@ -303,10 +306,12 @@ impl Place {
 fn window_on_press(
     on: On<WorldPress>,
     mut interaction_translation: ResMut<InteractionTranslation>,
+    cursor_translation: Res<CursorTranslation>,
     mut commands: Commands,
 ) {
     interaction_translation.grid = world_to_nearest_grid(on.translation);
     match on.button {
+        PointerButton::Primary if cursor_translation.grid.is_none() => commands.trigger(Erase(interaction_translation.grid)),
         PointerButton::Primary => commands.trigger(Place(interaction_translation.grid)),
         PointerButton::Secondary => commands.trigger(Erase(interaction_translation.grid)),
         PointerButton::Middle => (),
@@ -316,6 +321,8 @@ fn window_on_press(
 fn window_on_drag(
     on: On<WorldDrag>,
     mut interaction_translation: ResMut<InteractionTranslation>,
+    cursor_translation: Res<CursorTranslation>,
+    mode: Res<Mode>,
     mut commands: Commands,
 ) {
     let grid_translation = world_to_nearest_grid(on.translation);
@@ -326,6 +333,10 @@ fn window_on_drag(
     interaction_translation.grid = grid_translation;
 
     match on.button {
+        PointerButton::Primary if cursor_translation.grid.is_none() => match *mode {
+            Mode::Place => commands.trigger(Place(interaction_translation.grid)),
+            Mode::Erase => commands.trigger(Erase(interaction_translation.grid)),
+        }
         PointerButton::Primary => commands.trigger(Place(interaction_translation.grid)),
         PointerButton::Secondary => commands.trigger(Erase(interaction_translation.grid)),
         PointerButton::Middle => (),
@@ -384,6 +395,7 @@ struct CursorSprite;
 
 fn draw_cursor(
     mut cursor_sprite: Single<(&mut Transform, &mut Visibility), With<CursorSprite>>,
+    mut mode_button: Single<&mut Visibility, (With<ModeButton>, Without<CursorSprite>)>,
     cursor_translation: Res<CursorTranslation>,
     mut gizmos: Gizmos,
     ui: Query<(&UiHover, &UiDragged)>,
@@ -391,8 +403,10 @@ fn draw_cursor(
 ) {
     let Some(cursor_grid_translation) = cursor_translation.grid else {
         *cursor_sprite.1 = Visibility::Hidden;
+        **mode_button = Visibility::Visible;
         return;
     };
+
     if !ui
         .iter()
         .all(|(hovered, dragged)| !(hovered.0 || dragged.0))
@@ -402,6 +416,7 @@ fn draw_cursor(
     }
 
     *cursor_sprite.1 = Visibility::Visible;
+    **mode_button = Visibility::Hidden;
 
     let cursor_world_translation = grid_to_world(cursor_grid_translation);
     cursor_sprite.0.translation = cursor_world_translation.extend(1.);
@@ -724,15 +739,12 @@ fn spawn_picker(commands: &mut Commands, _font: Handle<Font>, sprites: &Sprites,
 
     commands
         .entity(grab)
-        .observe(
-            |on: On<WorldDrag>,
-             mut commands: Commands| {
-                commands.trigger(PickerUpdate {
-                    translation: on.translation,
-                    resize_delta: Vec2::ZERO,
-                });
-            },
-        )
+        .observe(|on: On<WorldDrag>, mut commands: Commands| {
+            commands.trigger(PickerUpdate {
+                translation: on.translation,
+                resize_delta: Vec2::ZERO,
+            });
+        })
         .observe(
             |on: On<Pointer<DragStart>>, mut drag: Query<&mut UiDragged>| {
                 drag.get_mut(on.entity).unwrap().0 = true;
@@ -939,6 +951,16 @@ struct DialogueBox;
 #[derive(Component)]
 struct DoneButton;
 
+#[derive(Component)]
+struct ModeButton;
+
+#[derive(Resource, Default)]
+enum Mode {
+    #[default]
+    Place,
+    Erase,
+}
+
 fn spawn_dialogue_box(commands: &mut Commands, asset_server: &AssetServer) {
     const SCALE: f32 = 1.5;
 
@@ -984,7 +1006,7 @@ fn spawn_dialogue_box(commands: &mut Commands, asset_server: &AssetServer) {
                     builder.spawn((
                         Text::new("DONE"),
                         TextFont {
-                            font: cloned_font,
+                            font: cloned_font.clone(),
                             font_size: 40.,
                             ..default()
                         },
@@ -1012,6 +1034,98 @@ fn spawn_dialogue_box(commands: &mut Commands, asset_server: &AssetServer) {
                         };
 
                         build.done = true;
+                    },
+                );
+        });
+
+    commands
+        .spawn((
+            Pickable {
+                should_block_lower: false,
+                is_hoverable: false,
+            },
+            Node {
+                width: percent(100),
+                height: percent(100),
+                align_items: AlignItems::End,
+                justify_content: JustifyContent::Start,
+                ..default()
+            },
+        ))
+        .with_children(|builder| {
+            builder
+                .spawn((
+                    UiHover(false),
+                    UiDragged(false),
+                    Visibility::Hidden,
+                    ModeButton,
+                    Node {
+                        margin: px(5).all(),
+                        width: px(150),
+                        height: px(70),
+                        border: px(5).all(),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        border_radius: BorderRadius::MAX,
+                        ..default()
+                    },
+                    BorderColor::all(WHITE),
+                    BackgroundColor(PURPLE.into()),
+                ))
+                .with_children(|builder| {
+                    builder.spawn((
+                        Text::new("PLACE"),
+                        TextFont {
+                            font: cloned_font.clone(),
+                            font_size: 40.,
+                            ..default()
+                        },
+                        TextColor(WHITE.into()),
+                    ));
+                })
+                .observe(|on: On<Pointer<Over>>, mut hover: Query<&mut UiHover>| {
+                    hover.get_mut(on.entity).unwrap().0 = true;
+                })
+                .observe(|on: On<Pointer<Out>>, mut hover: Query<&mut UiHover>| {
+                    hover.get_mut(on.entity).unwrap().0 = false;
+                })
+                .observe(
+                    move |on: On<Pointer<Click>>,
+                          mut background_colour: Query<&mut BackgroundColor>,
+                          mut commands: Commands,
+                          mut mode: ResMut<Mode>| {
+                        let mut background_colour = background_colour.get_mut(on.entity).unwrap();
+
+                        let mut entity = commands.entity(on.entity);
+                        entity.despawn_children();
+                        match *mode {
+                            Mode::Erase => {
+                                *mode = Mode::Place;
+                                *background_colour = BackgroundColor(PURPLE.into());
+                                entity.with_child((
+                                    Text::new("PLACE"),
+                                    TextFont {
+                                        font: cloned_font.clone(),
+                                        font_size: 40.,
+                                        ..default()
+                                    },
+                                    TextColor(WHITE.into()),
+                                ));
+                            }
+                            Mode::Place => {
+                                *mode = Mode::Erase;
+                                *background_colour = BackgroundColor(BLACK.into());
+                                entity.with_child((
+                                    Text::new("ERASE"),
+                                    TextFont {
+                                        font: cloned_font.clone(),
+                                        font_size: 40.,
+                                        ..default()
+                                    },
+                                    TextColor(WHITE.into()),
+                                ));
+                            }
+                        }
                     },
                 );
         });
