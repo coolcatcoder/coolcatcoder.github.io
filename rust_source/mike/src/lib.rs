@@ -226,10 +226,10 @@ fn on_press(
     sprite: Query<(), With<Sprite>>,
     mut commands: Commands,
 ) {
+    on.propagate(false);
     info!("Pressed. {:?}", on.hit.position);
 
     if sprite.get(on.entity).is_ok() {
-        on.propagate(false);
         info!("Sprite");
         interaction_translation.world = on.hit.position.unwrap().xy();
 
@@ -262,13 +262,15 @@ fn on_press(
 }
 
 fn on_drag(
-    on: On<Pointer<Drag>>,
+    mut on: On<Pointer<Drag>>,
     mut interaction_translation: ResMut<InteractionTranslation>,
     camera: Single<(&Camera, &GlobalTransform), With<CameraOnPrimaryWindow>>,
     mut previous_delta: Local<Vec2>,
     frame_count: Res<FrameCount>,
     mut commands: Commands,
 ) {
+    on.propagate(false);
+
     if on.delta != *previous_delta || frame_count.is_changed() {
         //info!("Changed.");
         *previous_delta = on.delta;
@@ -306,13 +308,15 @@ impl Place {
 fn window_on_press(
     on: On<WorldPress>,
     mut interaction_translation: ResMut<InteractionTranslation>,
-    cursor_translation: Res<CursorTranslation>,
+    mode: Res<Mode>,
     mut commands: Commands,
 ) {
     interaction_translation.grid = world_to_nearest_grid(on.translation);
     match on.button {
-        PointerButton::Primary if cursor_translation.grid.is_none() => commands.trigger(Erase(interaction_translation.grid)),
-        PointerButton::Primary => commands.trigger(Place(interaction_translation.grid)),
+        PointerButton::Primary => match *mode {
+            Mode::Place => commands.trigger(Place(interaction_translation.grid)),
+            Mode::Erase => commands.trigger(Erase(interaction_translation.grid)),
+        },
         PointerButton::Secondary => commands.trigger(Erase(interaction_translation.grid)),
         PointerButton::Middle => (),
     }
@@ -321,7 +325,6 @@ fn window_on_press(
 fn window_on_drag(
     on: On<WorldDrag>,
     mut interaction_translation: ResMut<InteractionTranslation>,
-    cursor_translation: Res<CursorTranslation>,
     mode: Res<Mode>,
     mut commands: Commands,
 ) {
@@ -333,11 +336,10 @@ fn window_on_drag(
     interaction_translation.grid = grid_translation;
 
     match on.button {
-        PointerButton::Primary if cursor_translation.grid.is_none() => match *mode {
+        PointerButton::Primary => match *mode {
             Mode::Place => commands.trigger(Place(interaction_translation.grid)),
             Mode::Erase => commands.trigger(Erase(interaction_translation.grid)),
-        }
-        PointerButton::Primary => commands.trigger(Place(interaction_translation.grid)),
+        },
         PointerButton::Secondary => commands.trigger(Erase(interaction_translation.grid)),
         PointerButton::Middle => (),
     }
@@ -468,17 +470,9 @@ struct Tiles(HashMap<IVec2, Entity>);
 fn erase(
     on: On<Erase>,
     mut tiles: ResMut<Tiles>,
-    ui: Query<(&UiHover, &UiDragged)>,
     sprite_markers: Query<&SpriteMarker>,
     mut commands: Commands,
 ) {
-    if !ui
-        .iter()
-        .all(|(hovered, dragged)| !(hovered.0 || dragged.0))
-    {
-        return;
-    }
-
     info!("Erased.");
 
     #[cfg(target_os = "linux")]
@@ -505,20 +499,7 @@ fn erase(
     }
 }
 
-fn place(
-    on: On<Place>,
-    mut commands: Commands,
-    sprites: Res<Sprites>,
-    mut tiles: ResMut<Tiles>,
-    ui: Query<(&UiHover, &UiDragged)>,
-) {
-    if !ui
-        .iter()
-        .all(|(hovered, dragged)| !(hovered.0 || dragged.0))
-    {
-        return;
-    }
-
+fn place(on: On<Place>, mut commands: Commands, sprites: Res<Sprites>, mut tiles: ResMut<Tiles>) {
     info!("Placed.");
 
     let tile = commands
